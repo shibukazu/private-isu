@@ -13,7 +13,7 @@ services:
   app:
     build:
       # Go実装の場合は golang/ PHP実装の場合は php/
-      context: ruby/
+      context: golang/
       dockerfile: Dockerfile
     depends_on:
       - mysql
@@ -45,6 +45,8 @@ services:
     volumes:
       - mysql:/var/lib/mysql
       - ./sql:/docker-entrypoint-initdb.d
+      - ./etc/mysql/conf.d:/etc/mysql/conf.d
+      - ./log/mysql:/var/log/mysql
     ports:
       - "3306:3306"
     networks:
