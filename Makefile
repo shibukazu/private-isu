@@ -1,4 +1,4 @@
-.PHONY: init
+.PHONY: init migrate
 init: webapp/sql/dump.sql.bz2 benchmarker/userdata/img
 
 webapp/sql/dump.sql.bz2:
@@ -12,3 +12,6 @@ benchmarker/userdata/img.zip:
 benchmarker/userdata/img: benchmarker/userdata/img.zip
 	cd benchmarker/userdata && \
 	unzip -qq -o img.zip
+
+migrate:
+	migrate -path webapp/migration -database "mysql://root:root@tcp(localhost:3306)/isuconp" up
