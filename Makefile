@@ -17,10 +17,28 @@ migrate:
 	migrate -path webapp/migration -database "mysql://root:root@tcp(localhost:3306)/isuconp" up
 
 bench:
+	rm -rf webapp/log/** && \
+	cd webapp && \
+	docker compose restart mysql nginx && \
+	while [ "`docker inspect -f '{{.State.Health.Status}}' private-isu-mysql-1`" != "healthy" ]; do \
+		echo "Waiting for MySQL to be healthy..."; \
+		sleep 2; \
+	done && \
+	while [ "`docker inspect -f '{{.State.Health.Status}}' private-isu-nginx-1`" != "healthy" ]; do \
+		echo "Waiting for Nginx to be healthy..."; \
+		sleep 2; \
+	done && \
+	cd ../ && \
 	cd benchmarker && \
 	docker build -t private-isu-benchmarker . && \
-	docker run --network host -i private-isu-benchmarker /bin/benchmarker -t http://host.docker.internal -u /opt/userdata && \
-	cd ../
-
-alp:
-	alp json --sort sum -r -m "/posts/[0-9]+,/@\w+,/image/\d+" -o count,method,uri,min,avg,max,sum < webapp/log/nginx/access.log
+	docker run --network host -i private-isu-benchmarker /bin/benchmarker -t http://host.docker.internal -u /opt/userdata | tee result.json && \
+	cd ../ && \
+	TIMESTAMP=`date +"%Y%m%d%H%M%S"` && \
+	mkdir -p webapp/result/$$TIMESTAMP && \
+	mv benchmarker/result.json webapp/result/$$TIMESTAMP/ && \
+	mkdir -p webapp/result/$$TIMESTAMP/log/mysql webapp/result/$$TIMESTAMP/log/nginx && \
+	cp webapp/log/mysql/slow.log webapp/result/$$TIMESTAMP/log/mysql/ && \
+	cp webapp/log/nginx/access.log webapp/result/$$TIMESTAMP/log/nginx/ && \
+	cp webapp/log/nginx/error.log webapp/result/$$TIMESTAMP/log/nginx/ && \
+	alp json --sort sum -r -m "/posts/[0-9]+,/@\w+,/image/\d+" -o count,method,uri,min,avg,max,sum < webapp/result/$$TIMESTAMP/log/nginx/access.log > webapp/result/$$TIMESTAMP/log/nginx/alp && \
+	pt-query-digest webapp/result/$$TIMESTAMP/log/mysql/slow.log > webapp/result/$$TIMESTAMP/log/mysql/pt-query-digest
