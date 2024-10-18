@@ -25,14 +25,20 @@ import (
 )
 
 var (
-	db    *sqlx.DB
-	store *gsm.MemcacheStore
+	db        *sqlx.DB
+	store     *gsm.MemcacheStore
+	MimeToExt = map[string]string{
+		"image/jpeg": "jpg",
+		"image/png":  "png",
+		"image/gif":  "gif",
+	}
 )
 
 const (
 	postsPerPage  = 20
 	ISO8601Format = "2006-01-02T15:04:05-07:00"
 	UploadLimit   = 10 * 1024 * 1024 // 10mb
+	ImageDir      = "/home/public/image"
 )
 
 type User struct {
@@ -649,11 +655,13 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := "INSERT INTO `posts` (`user_id`, `mime`, `imgdata`, `body`) VALUES (?,?,?,?)"
+
+	// 画像データを保存する代わりにインスタンス上のストレージに保存し、静的ファイルとして直接配信する
 	result, err := db.Exec(
 		query,
 		me.ID,
 		mime,
-		filedata,
+		[]byte{},
 		r.FormValue("body"),
 	)
 	if err != nil {
@@ -662,6 +670,18 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pid, err := result.LastInsertId()
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
+	err = os.MkdirAll(ImageDir, 0755)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	fileName := fmt.Sprintf("%s.%s", strconv.FormatInt(pid, 10), MimeToExt[mime])
+	err = os.WriteFile(path.Join(ImageDir, fileName), filedata, 0644)
 	if err != nil {
 		log.Print(err)
 		return
@@ -679,6 +699,7 @@ func getImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	post := Post{}
+	// TODO: wild cardはやめるべき
 	err = db.Get(&post, "SELECT * FROM `posts` WHERE `id` = ?", pid)
 	if err != nil {
 		log.Print(err)
@@ -696,6 +717,20 @@ func getImage(w http.ResponseWriter, r *http.Request) {
 			log.Print(err)
 			return
 		}
+
+		// 次回以降の高速化のために画像データを静的ファイルとしてキャッシュする
+		err = os.MkdirAll(ImageDir, 0755)
+		if err != nil {
+			log.Print(err)
+			return
+		}
+		fileName := fmt.Sprintf("%s.%s", pidStr, ext)
+		err = os.WriteFile(path.Join(ImageDir, fileName), post.Imgdata, 0644)
+		if err != nil {
+			log.Print(err)
+			return
+		}
+
 		return
 	}
 

@@ -18,6 +18,7 @@ migrate:
 
 bench:
 	rm -rf webapp/log/** && \
+	rm -rf webapp/public/image/** && \
 	cd webapp && \
 	docker compose restart mysql nginx && \
 	while [ "`docker inspect -f '{{.State.Health.Status}}' private-isu-mysql-1`" != "healthy" ]; do \
