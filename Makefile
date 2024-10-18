@@ -40,5 +40,5 @@ bench:
 	cp webapp/log/mysql/slow.log webapp/result/$$TIMESTAMP/log/mysql/ && \
 	cp webapp/log/nginx/access.log webapp/result/$$TIMESTAMP/log/nginx/ && \
 	cp webapp/log/nginx/error.log webapp/result/$$TIMESTAMP/log/nginx/ && \
-	alp json --sort sum -r -m "/posts/[0-9]+,/@\w+,/image/\d+" -o count,method,uri,min,avg,max,sum < webapp/result/$$TIMESTAMP/log/nginx/access.log > webapp/result/$$TIMESTAMP/log/nginx/alp && \
-	pt-query-digest webapp/result/$$TIMESTAMP/log/mysql/slow.log > webapp/result/$$TIMESTAMP/log/mysql/pt-query-digest
+	alp json --sort sum -r -m "/posts/[0-9]+,/@\w+,/image/\d+" -o count,method,uri,min,avg,max,sum < webapp/result/$$TIMESTAMP/log/nginx/access.log > webapp/result/$$TIMESTAMP/log/nginx/alp.log && \
+	pt-query-digest webapp/result/$$TIMESTAMP/log/mysql/slow.log > webapp/result/$$TIMESTAMP/log/mysql/pt-query-digest.log
