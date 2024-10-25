@@ -2,6 +2,7 @@ package main
 
 import (
 	crand "crypto/rand"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -26,6 +27,7 @@ import (
 
 var (
 	db        *sqlx.DB
+	mc        *memcache.Client
 	store     *gsm.MemcacheStore
 	MimeToExt = map[string]string{
 		"image/jpeg": "jpg",
@@ -42,12 +44,12 @@ const (
 )
 
 type User struct {
-	ID          int       `db:"id"`
-	AccountName string    `db:"account_name"`
-	Passhash    string    `db:"passhash"`
-	Authority   int       `db:"authority"`
-	DelFlg      int       `db:"del_flg"`
-	CreatedAt   time.Time `db:"created_at"`
+	ID          int       `db:"id" json:"id"`
+	AccountName string    `db:"account_name" json:"account_name"`
+	Passhash    string    `db:"passhash" json:"passhash"`
+	Authority   int       `db:"authority" json:"authority"`
+	DelFlg      int       `db:"del_flg" json:"del_flg"`
+	CreatedAt   time.Time `db:"created_at" json:"created_at"`
 }
 
 type Post struct {
@@ -64,14 +66,12 @@ type Post struct {
 }
 
 type Comment struct {
-	ID           int       `db:"id"`
-	PostID       int       `db:"post_id"`
-	UserID       int       `db:"user_id"`
-	Comment      string    `db:"comment"`
-	CreatedAt    time.Time `db:"created_at"`
-	User         User
-	CountPerPost int `db:"count_per_post"`
-	RowNumber    int `db:"row_num"`
+	ID        int       `db:"id" json:"id"`
+	PostID    int       `db:"post_id" json:"post_id"`
+	UserID    int       `db:"user_id" json:"user_id"`
+	Comment   string    `db:"comment" json:"comment"`
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	User      User      `json:"user"`
 }
 
 func init() {
@@ -180,6 +180,7 @@ func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 }
 
 func makePostsBySQL(csrfToken string, allComments bool, conditions []string, conditionArgs []interface{}) ([]Post, error) {
+	// 最適なインデックスの選択がうまく行われないため、下記方針は一旦諦めた
 	postsQuery := "SELECT p.id, p.user_id, p.imgdata, p.body, p.mime, p.created_at, " +
 		"u.account_name AS `user.account_name`, u.del_flg AS `user.del_flg` " +
 		"FROM posts p JOIN users u ON p.user_id = u.id WHERE u.del_flg = 0 "
@@ -225,7 +226,7 @@ func makePostsBySQL(csrfToken string, allComments bool, conditions []string, con
 		for i, _ := range posts {
 			if posts[i].ID == c.PostID {
 				posts[i].Comments = append(posts[i].Comments, c)
-				posts[i].CommentCount = c.CountPerPost
+				//posts[i].CommentCount = c.CountPerPost
 			}
 		}
 	}
@@ -235,6 +236,80 @@ func makePostsBySQL(csrfToken string, allComments bool, conditions []string, con
 		for j, k := 0, len(posts[i].Comments)-1; j < k; j, k = j+1, k-1 {
 			posts[i].Comments[j], posts[i].Comments[k] = posts[i].Comments[k], posts[i].Comments[j]
 		}
+	}
+
+	return posts, nil
+}
+
+func makePostsByMemcached(csrfToken string, allComments bool, conditions []string, conditionArgs []interface{}) ([]Post, error) {
+	postsQuery := "SELECT p.id, p.user_id, p.imgdata, p.body, p.mime, p.created_at, " +
+		"u.account_name AS `user.account_name`, u.del_flg AS `user.del_flg` " +
+		"FROM posts p JOIN users u ON p.user_id = u.id WHERE u.del_flg = 0 "
+	if len(conditions) > 0 {
+		postsQuery += " AND " + strings.Join(conditions, " AND ")
+	}
+	postsQuery += " ORDER BY p.created_at DESC LIMIT 20"
+	posts := []Post{}
+	err := db.Select(&posts, postsQuery, conditionArgs...)
+	if err != nil {
+		return nil, err
+	}
+
+	for postIdx := range posts {
+		var commentCount int 
+		commentCountKey := fmt.Sprintf("comment_count_%d", posts[postIdx].ID)
+		commentCountItem, err := mc.Get(commentCountKey)
+		if err != nil {
+			var commentCount int
+			err := db.Get(&commentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", posts[postIdx].ID)
+			if err != nil {
+				return nil, err
+			}
+			commentCountItem = &memcache.Item{Key: commentCountKey, Value: []byte(strconv.Itoa(commentCount))}
+			mc.Set(commentCountItem)
+		} else {
+			commentCount, _ = strconv.Atoi(string(commentCountItem.Value))
+		}
+		posts[postIdx].CommentCount = commentCount
+
+		var comments []Comment
+		comments_key := fmt.Sprintf("comments_%d", posts[postIdx].ID)
+		commentsItem, err := mc.Get(comments_key)
+		if err != nil {
+			comments_query := "SELECT * FROM `comments` WHERE `post_id` = ? ORDER BY `created_at` DESC"
+			if !allComments {
+				comments_query += " LIMIT 3"
+			}
+			err = db.Select(&comments, comments_query, posts[postIdx].ID)
+			if err != nil {
+				return nil, err
+			}
+			for i := 0; i < len(comments); i++ {
+				err := db.Get(&comments[i].User, "SELECT * FROM `users` WHERE `id` = ?", comments[i].UserID)
+				if err != nil {
+					return nil, err
+				}
+			}
+			jsonData, err := json.Marshal(comments)
+			if err != nil {
+				return nil, err
+			}
+			mc.Set(&memcache.Item{Key: comments_key, Value: jsonData})
+		} else {
+			err = json.Unmarshal(commentsItem.Value, &comments)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		// reverse
+		for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
+			comments[i], comments[j] = comments[j], comments[i]
+		}
+
+		posts[postIdx].Comments = comments
+
+		posts[postIdx].CSRFToken = csrfToken
 	}
 
 	return posts, nil
@@ -445,7 +520,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 	posts := []Post{}
 
-	posts, err := makePostsBySQL(getCSRFToken(r), false, []string{}, []interface{}{})
+	posts, err := makePostsByMemcached(getCSRFToken(r), false, []string{}, []interface{}{})
 	if err != nil {
 		log.Print(err)
 		return
@@ -482,7 +557,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	posts, err := makePostsBySQL(getCSRFToken(r), false, []string{"u.id = ?"}, []interface{}{user.ID})
+	posts, err := makePostsByMemcached(getCSRFToken(r), false, []string{"u.id = ?"}, []interface{}{user.ID})
 	if err != nil {
 		log.Print(err)
 		return
@@ -563,7 +638,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	posts, err := makePostsBySQL(getCSRFToken(r), false, []string{"p.created_at <= ?"}, []interface{}{t.Format(ISO8601Format)})
+	posts, err := makePostsByMemcached(getCSRFToken(r), false, []string{"p.created_at <= ?"}, []interface{}{t.Format(ISO8601Format)})
 	if err != nil {
 		log.Print(err)
 		return
@@ -592,7 +667,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	posts, err := makePostsBySQL(getCSRFToken(r), true, []string{"p.id = ?"}, []interface{}{pid})
+	posts, err := makePostsByMemcached(getCSRFToken(r), true, []string{"p.id = ?"}, []interface{}{pid})
 	if err != nil {
 		log.Print(err)
 		return
@@ -786,6 +861,8 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	mc.Delete("comments_" + strconv.Itoa(postID))
+
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", postID), http.StatusFound)
 }
 
@@ -887,6 +964,9 @@ func main() {
 		log.Fatalf("Failed to connect to DB: %s.", err.Error())
 	}
 	defer db.Close()
+
+	mc = memcache.New("memcached:11211")
+	defer mc.DeleteAll()
 
 	r := chi.NewRouter()
 
