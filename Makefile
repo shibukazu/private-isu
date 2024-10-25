@@ -32,7 +32,7 @@ bench:
 	cd ../ && \
 	cd benchmarker && \
 	docker build -t private-isu-benchmarker . && \
-	docker run --network host -i private-isu-benchmarker /bin/benchmarker -t http://host.docker.internal -u /opt/userdata | tee result.json && \
+	docker run --rm --network host -i private-isu-benchmarker /bin/benchmarker -t http://host.docker.internal -u /opt/userdata | tee result.json && \
 	cd ../ && \
 	TIMESTAMP=`date +"%Y%m%d%H%M%S"` && \
 	mkdir -p webapp/result/$$TIMESTAMP && \
