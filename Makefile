@@ -1,4 +1,4 @@
-.PHONY: init migrate bench
+.PHONY: init migrate bench rebuild
 init: webapp/sql/dump.sql.bz2 benchmarker/userdata/img
 
 webapp/sql/dump.sql.bz2:
@@ -15,6 +15,10 @@ benchmarker/userdata/img: benchmarker/userdata/img.zip
 
 migrate:
 	migrate -path webapp/migration -database "mysql://root:root@tcp(localhost:3306)/isuconp" up
+
+rebuild:
+	cd webapp && \
+	docker compose build app && docker compose up -d app
 
 bench:
 	rm -rf webapp/log/** && \
