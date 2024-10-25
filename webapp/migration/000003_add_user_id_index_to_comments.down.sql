@@ -1,0 +1,1 @@
+DROP INDEX comments_user_id;
