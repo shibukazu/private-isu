@@ -1,0 +1,1 @@
+CREATE INDEX posts_order_idx ON posts(created_at DESC);

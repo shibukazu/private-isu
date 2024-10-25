@@ -1,0 +1,1 @@
+DROP INDEX posts_order_idx;
