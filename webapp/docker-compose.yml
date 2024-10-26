@@ -6,6 +6,7 @@ services:
       - ./etc/nginx/conf.d:/etc/nginx/conf.d
       - ./public:/public
       - ./log/nginx:/var/log/nginx
+      - ./socket:/var/run
     ports:
       - "80:80"
     networks:
@@ -36,6 +37,7 @@ services:
       - my_network
     volumes:
       - ./public:/home/public
+      - ./socket:/var/run
     init: true
     ports:
       - "8080:8080"

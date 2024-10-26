@@ -8,13 +8,16 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -1023,5 +1026,27 @@ func main() {
 		http.FileServer(http.Dir("../public")).ServeHTTP(w, r)
 	})
 
-	log.Fatal(http.ListenAndServe(":8080", r))
+	listener, err := net.Listen(("unix"), "/var/run/app.sock")
+	if err != nil {
+		log.Fatalf("Failed to listen: %s", err.Error())
+	}
+	defer func() {
+		err := listener.Close()
+		if err != nil {
+			log.Fatalf("Failed to close listener: %s", err.Error())
+		}
+	}()
+
+	c := make(chan os.Signal, 2)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		err := listener.Close()
+		if err != nil {
+			log.Fatalf("Failed to close listener: %s", err.Error())
+		}
+		os.Exit(1)
+	}()
+
+	log.Fatal(http.Serve(listener, r))
 }
