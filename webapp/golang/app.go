@@ -266,12 +266,28 @@ func makePostsByMemcached(csrfToken string, allComments bool, conditions []strin
 	if err != nil {
 		return nil, err
 	}
+	commentCountKeys := []string{}
+	commentKeys := []string{}
+	for _, p := range posts {
+		commentCountKeys = append(commentCountKeys, fmt.Sprintf("comment_count_%d", p.ID))
+		commentKeys = append(commentKeys, fmt.Sprintf("comments_%d", p.ID))
+	}
+	commentCountItems, err := mc.GetMulti(commentCountKeys)
+	if err != nil {
+		// ここでのエラーは一般にネットワークエラーであり、存在していない場合はitemがnilになる
+		return nil, err
+	}
+	commentItems, err := mc.GetMulti(commentKeys)
+	if err != nil {
+		return nil, err
+	}
 
 	for postIdx := range posts {
 		var commentCount int
+
 		commentCountKey := fmt.Sprintf("comment_count_%d", posts[postIdx].ID)
-		commentCountItem, err := mc.Get(commentCountKey)
-		if err != nil {
+		commentCountItem := commentCountItems[commentCountKey]
+		if commentCountItem == nil {
 			var commentCount int
 			err := db.Get(&commentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", posts[postIdx].ID)
 			if err != nil {
@@ -286,8 +302,8 @@ func makePostsByMemcached(csrfToken string, allComments bool, conditions []strin
 
 		var comments []Comment
 		comments_key := fmt.Sprintf("comments_%d", posts[postIdx].ID)
-		commentsItem, err := mc.Get(comments_key)
-		if err != nil {
+		commentsItem := commentItems[comments_key]
+		if commentsItem == nil {
 			comments_query := `
 			SELECT c.*, 
 				u.id AS 'user.id', 
