@@ -33,6 +33,7 @@ bench:
 		echo "Waiting for Nginx to be healthy..."; \
 		sleep 2; \
 	done && \
+	echo "flush_all" | nc 127.0.0.1 11211 && \
 	cd ../ && \
 	cd benchmarker && \
 	docker build -t private-isu-benchmarker . && \

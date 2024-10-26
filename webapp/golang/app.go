@@ -242,9 +242,16 @@ func makePostsBySQL(csrfToken string, allComments bool, conditions []string, con
 }
 
 func makePostsByMemcached(csrfToken string, allComments bool, conditions []string, conditionArgs []interface{}) ([]Post, error) {
-	postsQuery := "SELECT p.id, p.user_id, p.imgdata, p.body, p.mime, p.created_at, " +
-		"u.account_name AS `user.account_name`, u.del_flg AS `user.del_flg` " +
-		"FROM posts p JOIN users u ON p.user_id = u.id WHERE u.del_flg = 0 "
+	var postsQuery string
+	if len(conditions) == 0 {
+		postsQuery = "SELECT p.id, p.user_id, p.imgdata, p.body, p.mime, p.created_at, " +
+			"u.account_name AS `user.account_name`, u.del_flg AS `user.del_flg` " +
+			"FROM posts p FORCE INDEX(`posts_order`) JOIN users u ON p.user_id = u.id WHERE u.del_flg = 0 "
+	} else {
+		postsQuery = "SELECT p.id, p.user_id, p.imgdata, p.body, p.mime, p.created_at, " +
+			"u.account_name AS `user.account_name`, u.del_flg AS `user.del_flg` " +
+			"FROM posts p JOIN users u ON p.user_id = u.id WHERE u.del_flg = 0 "
+	}
 	if len(conditions) > 0 {
 		postsQuery += " AND " + strings.Join(conditions, " AND ")
 	}
@@ -256,7 +263,7 @@ func makePostsByMemcached(csrfToken string, allComments bool, conditions []strin
 	}
 
 	for postIdx := range posts {
-		var commentCount int 
+		var commentCount int
 		commentCountKey := fmt.Sprintf("comment_count_%d", posts[postIdx].ID)
 		commentCountItem, err := mc.Get(commentCountKey)
 		if err != nil {
@@ -276,19 +283,25 @@ func makePostsByMemcached(csrfToken string, allComments bool, conditions []strin
 		comments_key := fmt.Sprintf("comments_%d", posts[postIdx].ID)
 		commentsItem, err := mc.Get(comments_key)
 		if err != nil {
-			comments_query := "SELECT * FROM `comments` WHERE `post_id` = ? ORDER BY `created_at` DESC"
+			comments_query := `
+			SELECT c.*, 
+				u.id AS 'user.id', 
+				u.account_name AS 'user.account_name', 
+				u.passhash AS 'user.passhash', 
+				u.authority AS 'user.authority', 
+				u.del_flg AS 'user.del_flg', 
+				u.created_at AS 'user.created_at'
+			FROM comments AS c
+			JOIN users AS u ON c.user_id = u.id
+			WHERE c.post_id = ?
+			ORDER BY c.created_at DESC`
+
 			if !allComments {
 				comments_query += " LIMIT 3"
 			}
 			err = db.Select(&comments, comments_query, posts[postIdx].ID)
 			if err != nil {
 				return nil, err
-			}
-			for i := 0; i < len(comments); i++ {
-				err := db.Get(&comments[i].User, "SELECT * FROM `users` WHERE `id` = ?", comments[i].UserID)
-				if err != nil {
-					return nil, err
-				}
 			}
 			jsonData, err := json.Marshal(comments)
 			if err != nil {
